@@ -1,0 +1,73 @@
+import datetime
+import os
+from hubspot import HubSpot
+from hubspot.crm.deals import ApiException
+
+
+def main(event):
+    # Inicializando a variável para indicar se está dentro do horário comercial
+    horario_comercial = None
+
+    # Instanciando para ter acesso ao token da api
+    hubspot = HubSpot(access_token=os.getenv('deal_property'))
+
+    # Pegando a data de criação (data_unix) do evento
+    data_unix = event.get('inputFields').get('data_criacao')
+
+    # Convertendo o timestamp da "Data Criação" (em Unix) para datetime
+    data_criacao = datetime.datetime.fromtimestamp(int(data_unix) / 1000)
+
+    # Obtendo o dia da semana (0 = segunda-feira, 1 = terça-feira, ..., 6 = domingo)
+    dia_semana = data_criacao.weekday()
+
+    # Definindo a hora final do expediente
+    hora_final = "20:30:00"
+    
+    # Definindo o horário de início de acordo com o dia da semana (considerando fuso horário do Reino Unido) 
+    if dia_semana == 0 or dia_semana == 3:  # Segunda e Quinta-feira
+        hora_inicio = "13:00:00"
+    elif dia_semana == 1 or dia_semana == 2 or dia_semana == 4:  # Terça, Quarta e Sexta-feira
+        hora_inicio = "12:30:00"
+    else:
+        # Se for fim de semana, considera como horário comercial falso
+        hora_inicio = "13:00:00"
+        horario_comercial = False
+
+
+    # Convertendo a data de criação e os horários para datetime
+    check_time = datetime.datetime.strptime(f"{data_criacao.time()}", "%H:%M:%S.%f")
+    start_time = datetime.datetime.strptime(f"{hora_inicio}", "%H:%M:%S")
+    end_time = datetime.datetime.strptime(f"{hora_final}", "%H:%M:%S")
+    
+    # Verificando se o horário de criação está dentro do intervalo de horário comercial
+    if start_time <= check_time <= end_time and horario_comercial is None:
+        horario_comercial = True
+    else:
+        horario_comercial = False
+
+    criado_em_horario_comercial_ = ''
+    
+    try:
+        # Usando a API para buscar a propriedade do Objeto "Deal" no HubSpot
+        object_id = event.get('object', {}).get('objectId')
+        if object_id is None:
+            raise ValueError("Não foi possível encontrar o 'objectId' no evento")
+        
+        ApiResponse = hubspot.crm.deals.basic_api.get_by_id(object_id, properties=["criado_em_horario_comercial_"])
+        
+        # Atualizando o valor da propriedade do Deal
+        hubspot.crm.deals.basic_api.update(object_id, 
+                                          {
+                                              "properties":
+                                              {
+                                                  "criado_em_horario_comercial_": horario_comercial
+                                              }
+                                          })
+    except ApiException as e:
+        print(f"Erro ao acessar a API do HubSpot: {e}")
+    except ValueError as ve:
+        print(f"Erro no formato do evento: {ve}")
+    
+    return {
+        "outputFields": {}
+    }
