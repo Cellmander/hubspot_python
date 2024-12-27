@@ -1,0 +1,69 @@
+import datetime
+import os
+from hubspot import HubSpot
+from hubspot.crm.deals import ApiException
+
+def main(event):
+    # Instanciando a API para obter e editar a propriedade do negócio
+    hubspot = HubSpot(access_token=os.getenv('deal_property'))
+    
+    # Obtendo a data da chamada, que é um timestamp Unix em milissegundos (pode ser string ou inteiro)
+    data_criacao_unix = event.get('inputFields').get('data_criacao')
+    
+    # Certificando-se de que data_chamada_unix é um número
+    if isinstance(data_criacao_unix, str):
+        data_criacao_unix = int(data_criacao_unix)  # Converte de string para inteiro
+    
+    # Convertendo o timestamp Unix (em milissegundos) para datetime
+    data_criacao = datetime.datetime.fromtimestamp(data_criacao_unix / 1000)
+
+    comeco_expediente = data_criacao
+    
+    while True:
+
+        # Avalia se foi criado após às 17h30, e considera a data de criação do próximo dia (considera fuso do Reino Unido, conforme dito no readme)
+        if (comeco_expediente.hour >= 20 and comeco_expediente.minute > 30) or comeco_expediente.hour >= 21:
+            	comeco_expediente = data_criacao + datetime.timedelta(days=1)
+        
+        if comeco_expediente.weekday() == 5:
+            comeco_expediente += datetime.timedelta(days=2)
+            comeco_expediente = comeco_expediente.replace(hour=13, minute=0, second=0, microsecond=0)
+            break
+        elif comeco_expediente.weekday() == 6:
+            comeco_expediente += datetime.timedelta(days=1)
+            comeco_expediente = comeco_expediente.replace(hour=13, minute=0, second=0, microsecond=0)
+            break
+
+        weekday = comeco_expediente.weekday()
+        # Definindo os horários de expediente dependendo do dia da semana
+        if weekday == 0 or weekday == 3:
+            comeco_expediente = comeco_expediente.replace(hour=13, minute=0, second=0, microsecond=0)
+            break
+        elif weekday == 1 or weekday == 2 or weekday == 4:
+            comeco_expediente = comeco_expediente.replace(hour=12, minute=30, second=0, microsecond=0)
+            break
+    
+    # Convertendo o horário de expediente para formato Unix (timestamp)
+    comeco_expediente_unix = int(comeco_expediente.timestamp()* 1000)
+    
+    try:
+        object_id = event.get('object', {}).get('objectId')
+        if object_id is None:
+            raise ValueError("Não foi possível encontrar o ID do negócio")
+        
+        # Atualizando a propriedade do negócio com o timestamp de Unix
+        hubspot.crm.deals.basic_api.update(object_id, 
+                                          {
+                                              "properties": {
+                                                  "controle_do_tempo_de_atendimento": comeco_expediente_unix
+                                              }
+                                          })
+        
+    except ApiException as e:
+        print(f"Erro ao acessar a API do HubSpot: {e}")
+    except ValueError as ve:
+        print(f"Erro no formato do evento: {ve}")
+
+    return {
+      "outputFields": {'hora': comeco_expediente_unix}
+    }
